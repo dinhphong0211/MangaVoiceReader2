@@ -229,6 +229,7 @@ export default function App() {
       <main>
         {activePage === "home" && (
           <HomePage
+            currentUser={currentUser}
             searchQuery={searchQuery}
             audioDescOnly={audioDescOnly}
             randomTrigger={randomTrigger}

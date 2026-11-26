@@ -9,6 +9,52 @@ from rest_framework import status
 from accounts.models import User
 from .models import Comic, Chapter, Page, ReadingHistory
 
+# Khởi tạo Lazy-load cho mô hình CLIP của OpenAI để nhận diện danh mục truyện từ ảnh bìa
+_clip_model = None
+_clip_processor = None
+
+MANGA_GENRES = {
+    "Hành động": "anime manga cover with action, fighting, swords, explosions, battle",
+    "Phiêu lưu": "adventure manga cover, journey, exploring new worlds",
+    "Tình cảm": "romantic shoujo manga cover with love, couple, flowers, soft colors",
+    "Kinh dị": "dark horror manga cover with ghosts, monsters, blood, scary atmosphere",
+    "Hài hước": "funny comedy slice of life manga cover, school life, happy daily life",
+    "Giả tưởng": "fantasy isekai manga cover with magic, dragons, medieval world, RPG",
+    "Sci-Fi": "sci-fi mecha manga cover with giant robots, spaceships, futuristic technology",
+    "Thể thao": "sports manga cover with basketball, football, volleyball, stadium, athletes",
+    "Trinh thám": "mystery detective manga cover with clues, magnifying glass, suspense, crime"
+}
+
+
+def predict_genres_from_cover(pil_image):
+    """Dùng mô hình CLIP của OpenAI nhận diện top danh mục truyện bằng tiếng Việt"""
+    global _clip_model, _clip_processor
+    try:
+        import torch
+        from transformers import CLIPProcessor, CLIPModel
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if _clip_model is None or _clip_processor is None:
+            model_id = "openai/clip-vit-large-patch14"
+            _clip_model = CLIPModel.from_pretrained(model_id).to(device)
+            _clip_processor = CLIPProcessor.from_pretrained(model_id)
+
+        labels = list(MANGA_GENRES.keys())
+        prompts = list(MANGA_GENRES.values())
+        rgb_img = pil_image.convert("RGB")
+
+        inputs = _clip_processor(text=prompts, images=rgb_img, return_tensors="pt", padding=True).to(device)
+        with torch.no_grad():
+            outputs = _clip_model(**inputs)
+            probs = outputs.logits_per_image.softmax(dim=1).cpu().numpy()[0]
+
+        results = sorted(zip(labels, probs), key=lambda x: x[1], reverse=True)
+        top_genres = [label for label, prob in results[:3] if prob > 0.12]
+        return top_genres if top_genres else [results[0][0]]
+    except Exception as e:
+        print(f"[CLIP Warning] Không thể chạy CLIP tự động ({e}), dùng danh mục mặc định.")
+        return ["Hành động", "Phiêu lưu"]
+
 
 @api_view(['POST'])
 def register_account(request):
@@ -73,23 +119,47 @@ def simple_login(request):
 
 @api_view(['GET'])
 def list_comics(request):
-    """Trả về toàn bộ truyện Admin đã đăng để mọi User vào trang chủ đều thấy"""
+    """Trả về toàn bộ truyện Admin đã đăng kèm mô tả, danh mục CLIP và danh sách chương"""
     comics = Comic.objects.all().order_by('-created_at')
     data = []
     for comic in comics:
-        latest_chap = comic.chapters.order_by('-chapter_no').first()
-        first_page = latest_chap.pages.order_by('page_no').first() if latest_chap else None
+        chapters_qs = comic.chapters.all().order_by('chapter_no')
+        first_chap = chapters_qs.first()
+        latest_chap = chapters_qs.last()
+
+        cover_chap = first_chap or latest_chap
+        first_page = cover_chap.pages.order_by('page_no').first() if cover_chap else None
         cover_url = f"http://127.0.0.1:8000/media/{first_page.image_path}" if first_page else ""
+
+        chapters_list = []
+        total_pages = 0
+        for ch in chapters_qs:
+            p_count = ch.pages.count()
+            total_pages += p_count
+            ch_first_page = ch.pages.order_by('page_no').first()
+            ch_thumb = f"http://127.0.0.1:8000/media/{ch_first_page.image_path}" if ch_first_page else cover_url
+            chapters_list.append({
+                "id": ch.id,
+                "chapter_no": ch.chapter_no,
+                "title": ch.title or f"Chương {ch.chapter_no}",
+                "page_count": p_count,
+                "thumbnail": ch_thumb,
+            })
 
         data.append({
             "id": comic.id,
+            "firstChapterId": first_chap.id if first_chap else None,
             "latestChapterId": latest_chap.id if latest_chap else None,
             "title": comic.title,
             "author": comic.author,
+            "description": comic.description,
+            "genres": comic.genres if comic.genres else ["Hành động", "Phiêu lưu"],
             "castType": comic.cast_type,
             "isFeatured": comic.is_featured,
             "hasAudioDesc": comic.has_audio_desc,
             "cover": cover_url,
+            "totalPages": total_pages,
+            "chapters": chapters_list,
             "latestChapter": f"Chap {latest_chap.chapter_no}" if latest_chap else "Chưa có chương",
             "hasVoice": latest_chap.status == 'done' if latest_chap else False,
             "readingDirection": comic.reading_direction,
@@ -100,7 +170,7 @@ def list_comics(request):
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
 def upload_comic_chapter(request):
-    """CHỈ ADMIN mới được đăng truyện chính thức lên thư viện web (Chưa chạy AI/TTS)"""
+    """CHỈ ADMIN mới được đăng truyện chính thức lên thư viện web + Tự động nhận diện danh mục bằng CLIP"""
     user_role = request.headers.get('X-User-Role', 'user')
     if user_role != 'admin':
         return Response(
@@ -111,6 +181,7 @@ def upload_comic_chapter(request):
     title = request.data.get('title', 'Truyện mới tải lên')
     chapter_no = int(request.data.get('chapter_no', 1))
     reading_direction = request.data.get('reading_direction', 'ltr')
+    description = request.data.get('description', '').strip()
     files = sorted(request.FILES.getlist('images'), key=lambda f: f.name)
 
     if not files:
@@ -126,11 +197,23 @@ def upload_comic_chapter(request):
     is_featured = request.data.get('is_featured', 'true').lower() == 'true'
     has_audio_desc = request.data.get('has_audio_desc', 'true').lower() == 'true'
 
+    first_img = Image.open(files[0])
+    detected_genres = predict_genres_from_cover(first_img)
+    files[0].seek(0)
+
+    default_desc = (
+        description
+        if description
+        else f"Bộ truyện {title} thuộc thể loại {', '.join(detected_genres)}. Từng khung tranh được đọc to với giọng nhân vật AI và hiệu ứng âm thanh sống động."
+    )
+
     comic, created = Comic.objects.get_or_create(
         title=title,
         defaults={
             "owner": owner,
             "author": author,
+            "description": default_desc,
+            "genres": detected_genres,
             "cast_type": cast_type,
             "is_featured": is_featured,
             "has_audio_desc": has_audio_desc,
@@ -139,6 +222,10 @@ def upload_comic_chapter(request):
     )
     if not created:
         comic.author = author
+        if description:
+            comic.description = description
+        if not comic.genres:
+            comic.genres = detected_genres
         comic.cast_type = cast_type
         comic.is_featured = is_featured
         comic.has_audio_desc = has_audio_desc
@@ -175,7 +262,71 @@ def upload_comic_chapter(request):
         "message": "Admin đã đăng truyện lên thư viện thành công!",
         "comic_id": comic.id,
         "chapter_id": chapter.id,
+        "detected_genres": comic.genres,
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['PUT', 'PATCH'])
+def update_comic(request, comic_id):
+    """CHỈ ADMIN: Cập nhật tên truyện, tác giả, mô tả, danh mục và trạng thái nổi bật"""
+    user_role = request.headers.get('X-User-Role', 'user')
+    if user_role != 'admin':
+        return Response(
+            {"error": "Chỉ Admin mới có quyền chỉnh sửa truyện!"},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    try:
+        comic = Comic.objects.get(id=comic_id)
+    except Comic.DoesNotExist:
+        return Response({"error": "Không tìm thấy truyện."}, status=404)
+
+    title = request.data.get('title', '').strip()
+    author = request.data.get('author', '').strip()
+    description = request.data.get('description', '').strip()
+    genres = request.data.get('genres')
+    is_featured = request.data.get('is_featured')
+    has_audio_desc = request.data.get('has_audio_desc')
+
+    if title:
+        comic.title = title
+    if author:
+        comic.author = author
+    if description is not None:
+        comic.description = description
+    if isinstance(genres, list):
+        comic.genres = [g.strip() for g in genres if g.strip()]
+    if is_featured is not None:
+        comic.is_featured = bool(is_featured)
+    if has_audio_desc is not None:
+        comic.has_audio_desc = bool(has_audio_desc)
+
+    comic.save()
+    return Response({"message": "Cập nhật truyện thành công!"})
+
+
+@api_view(['DELETE'])
+def delete_comic(request, comic_id):
+    """CHỈ ADMIN: Xóa toàn bộ truyện, các chương và file ảnh liên quan"""
+    user_role = request.headers.get('X-User-Role', 'user')
+    if user_role != 'admin':
+        return Response(
+            {"error": "Chỉ Admin mới có quyền xóa truyện!"},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    try:
+        comic = Comic.objects.get(id=comic_id)
+    except Comic.DoesNotExist:
+        return Response({"error": "Không tìm thấy truyện."}, status=404)
+
+    for chapter in comic.chapters.all():
+        for page in chapter.pages.all():
+            if page.image_path and default_storage.exists(page.image_path):
+                default_storage.delete(page.image_path)
+
+    comic.delete()
+    return Response({"message": "Đã xóa bộ truyện thành công!"})
 
 
 @api_view(['POST'])

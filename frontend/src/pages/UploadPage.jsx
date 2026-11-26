@@ -4,6 +4,7 @@ import { UploadCloud, BookOpen, CheckCircle2, Loader2, ShieldAlert } from "lucid
 export default function UploadPage({ mode, currentUser, onUploadSuccess, onPersonalReadReady }) {
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("LiveComic Studio • CC-BY");
+  const [description, setDescription] = useState("");
   const [isFeatured, setIsFeatured] = useState(true);
   const [hasAudioDesc, setHasAudioDesc] = useState(true);
   const [chapterNo, setChapterNo] = useState(1);
@@ -41,6 +42,7 @@ export default function UploadPage({ mode, currentUser, onUploadSuccess, onPerso
     const formData = new FormData();
     formData.append("title", title.trim() || (isAdminMode ? "Truyện mới" : "Truyện cá nhân"));
     formData.append("author", author);
+    formData.append("description", description);
     formData.append("cast_type", "full_cast");
     formData.append("is_featured", isFeatured);
     formData.append("has_audio_desc", hasAudioDesc);
@@ -99,7 +101,7 @@ export default function UploadPage({ mode, currentUser, onUploadSuccess, onPerso
             }`}
           >
             {isAdminMode
-              ? "Quyền Quản Trị Viên (Hiển thị công khai trên Trang Chủ)"
+              ? "Quyền Quản Trị Viên (Tự động nhận diện thể loại bằng CLIP AI)"
               : "Chế Độ Đọc Cá Nhân (Không lưu server)"}
           </span>
           <h1 className="text-2xl font-bold text-white">
@@ -129,7 +131,7 @@ export default function UploadPage({ mode, currentUser, onUploadSuccess, onPerso
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="VD: Doraemon..."
+                placeholder="VD: Gorgo #02, Doraemon..."
                 className="w-full bg-[#11111b] border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-400"
               />
             </div>
@@ -156,8 +158,21 @@ export default function UploadPage({ mode, currentUser, onUploadSuccess, onPerso
                   type="text"
                   value={author}
                   onChange={(e) => setAuthor(e.target.value)}
-                  placeholder="VD: Fujiko F. Fujio"
-                  className="w-full bg-[#181824] border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white"
+                  placeholder="VD: Joe Gill và Steve Ditko"
+                  className="w-full bg-[#181824] border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-400 mb-1.5">
+                  Mô tả nội dung truyện (Hiển thị trong Popup thông tin)
+                </label>
+                <textarea
+                  rows="3"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Nhập tóm tắt cốt truyện (để trống hệ thống sẽ tự tạo mô tả theo danh mục AI nhận diện)..."
+                  className="w-full bg-[#181824] border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
                 />
               </div>
 
@@ -192,7 +207,7 @@ export default function UploadPage({ mode, currentUser, onUploadSuccess, onPerso
           >
             <UploadCloud className="w-10 h-10 text-amber-400 mx-auto mb-3" />
             <p className="text-sm font-medium text-zinc-200">
-              Kéo thả các trang ảnh truyện (JPG, PNG, WEBP) vào đây (Tấm đầu tiên sẽ làm ảnh bìa)
+              Kéo thả các trang ảnh truyện (JPG, PNG, WEBP) vào đây (Tấm đầu tiên dùng làm ảnh bìa & phân loại danh mục)
             </p>
             <label className="inline-block mt-3 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer">
               Chọn file từ máy
@@ -219,7 +234,7 @@ export default function UploadPage({ mode, currentUser, onUploadSuccess, onPerso
             {loading ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Đang tải trang truyện lên hệ thống...</span>
+                <span>Đang tải truyện & phân tích danh mục AI...</span>
               </>
             ) : (
               <>

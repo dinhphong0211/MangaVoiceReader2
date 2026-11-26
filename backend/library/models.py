@@ -20,6 +20,8 @@ class Comic(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='comics', db_column='owner_id')
     title = models.CharField(max_length=255)
     author = models.CharField(max_length=255, default="LiveComic Studio • CC-BY")
+    description = models.TextField(blank=True, default="Khám phá câu chuyện hấp dẫn với công nghệ đọc thoại AI đa nhân vật và mô tả âm thanh sống động.")
+    genres = models.JSONField(default=list, blank=True)  # Lưu danh mục nhận diện từ CLIP AI
     cast_type = models.CharField(max_length=20, choices=CastType.choices, default=CastType.FULL_CAST)
     is_featured = models.BooleanField(default=True)
     has_audio_desc = models.BooleanField(default=True)
