@@ -1,0 +1,8 @@
+django
+djangorestframework
+djangorestframework-simplejwt
+drf-spectacular
+psycopg2-binary
+celery
+redis
+python-dotenv

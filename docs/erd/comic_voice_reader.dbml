@@ -1,0 +1,178 @@
+Enum user_role {
+  user
+  admin
+}
+
+Enum model_task {
+  detect
+  ocr
+  tts
+}
+
+Enum reading_direction {
+  ltr
+  rtl
+}
+
+Enum source_type {
+  user_upload
+  open_license
+  synthetic
+}
+
+Enum chapter_status {
+  uploaded
+  processing
+  done
+  failed
+}
+
+Enum bubble_type {
+  speech
+  shout
+  text_free
+  sfx
+  other
+}
+
+Enum job_status {
+  pending
+  running
+  done
+  failed
+}
+
+Table users {
+  id bigint [pk, increment]
+  email varchar(255) [not null, unique]
+  password_hash varchar(255) [not null]
+  display_name varchar(100)
+  role user_role [not null, default: 'user']
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table ai_models {
+  id bigint [pk, increment]
+  task model_task [not null]
+  name varchar(100) [not null, note: 'vd: yolo-bubble, vietocr, paddleocr']
+  version varchar(50) [not null, note: 'vd: v1-baseline, v2-finetuned']
+  weights_path varchar(500) [note: 'NULL nếu là API bên thứ ba']
+  is_active boolean [not null, default: false]
+  metrics_json jsonb [note: 'vd: mAP50 hoặc CER']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (task, name, version) [unique]
+  }
+}
+
+Table comics {
+  id bigint [pk, increment]
+  owner_id bigint [not null]
+  title varchar(255) [not null]
+  reading_direction reading_direction [not null, default: 'ltr']
+  source_type source_type [not null, default: 'user_upload']
+  license_note text [note: 'Ghi nguồn / giấy phép']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    owner_id
+  }
+}
+
+Table chapters {
+  id bigint [pk, increment]
+  comic_id bigint [not null]
+  chapter_no int [not null]
+  title varchar(255)
+  status chapter_status [not null, default: 'uploaded']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (comic_id, chapter_no) [unique]
+  }
+}
+
+Table pages {
+  id bigint [pk, increment]
+  chapter_id bigint [not null]
+  page_no int [not null, note: 'Thứ tự trong chương']
+  page_label varchar(20) [note: 'Số trang in trên truyện']
+  image_path varchar(500) [not null]
+  width int [not null]
+  height int [not null]
+  sha256 char(64) [note: 'Phát hiện trang trùng']
+
+  indexes {
+    (chapter_id, page_no) [unique]
+  }
+}
+
+Table bubbles {
+  id bigint [pk, increment]
+  page_id bigint [not null]
+  detect_model_id bigint
+  bubble_type bubble_type [not null, default: 'speech']
+  x int [not null, note: 'Pixel ảnh gốc, gốc tọa độ góc trên trái']
+  y int [not null]
+  w int [not null]
+  h int [not null]
+  confidence real
+  reading_order int [note: 'NULL đến khi sắp thứ tự xong']
+  is_manual boolean [not null, default: false, note: 'Người dùng tự vẽ/sửa']
+
+  indexes {
+    (page_id, reading_order)
+  }
+}
+
+Table ocr_results {
+  id bigint [pk, increment]
+  bubble_id bigint [not null, unique]
+  ocr_model_id bigint
+  text_raw text [not null, note: 'OCR nguyên bản']
+  text_corrected text [note: 'Người dùng sửa, dùng huấn luyện lại']
+  text_tts text [note: 'Đã chuẩn hóa để đưa vào TTS']
+confidence real
+}
+
+Table audio_clips {
+  id bigint [pk, increment]
+  bubble_id bigint [not null]
+  tts_model_id bigint
+  voice varchar(50) [not null]
+  text_hash char(64) [not null, note: 'sha256 của text_tts, dùng cache']
+  file_path varchar(500) [not null]
+  duration_ms int
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (bubble_id, voice, text_hash) [unique]
+    (text_hash, voice)
+  }
+}
+
+Table processing_jobs {
+  id bigint [pk, increment]
+  chapter_id bigint [not null]
+  task model_task [not null]
+  status job_status [not null, default: 'pending']
+  error_message text
+  started_at timestamptz
+  finished_at timestamptz
+
+  indexes {
+    (chapter_id, task)
+  }
+}
+
+Ref: comics.owner_id > users.id [delete: cascade]
+Ref: chapters.comic_id > comics.id [delete: cascade]
+Ref: pages.chapter_id > chapters.id [delete: cascade]
+Ref: bubbles.page_id > pages.id [delete: cascade]
+Ref: bubbles.detect_model_id > ai_models.id
+Ref: ocr_results.bubble_id - bubbles.id [delete: cascade]
+Ref: ocr_results.ocr_model_id > ai_models.id
+Ref: audio_clips.bubble_id > bubbles.id [delete: cascade]
+Ref: audio_clips.tts_model_id > ai_models.id
+Ref: processing_jobs.chapter_id > chapters.id [delete: cascade]

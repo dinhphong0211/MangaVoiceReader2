@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.env
+db.sqlite3
+backend/media/*
+!backend/media/.gitkeep
+ai/weights/*
+!ai/weights/.gitkeep
+ai/datasets/*
+!ai/datasets/.gitkeep
+*.pt
+*.pth
+.DS_Store
