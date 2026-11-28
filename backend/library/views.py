@@ -1,4 +1,5 @@
 import hashlib
+import traceback
 from PIL import Image
 from django.core.files.storage import default_storage
 from rest_framework.decorators import api_view, parser_classes
@@ -442,7 +443,16 @@ def detect_chapter_bubbles_api(request, chapter_id):
     except Chapter.DoesNotExist:
         return Response({"error": "Không tìm thấy chương."}, status=status.HTTP_404_NOT_FOUND)
 
-    total_bubbles = process_chapter_bubbles(chapter)
+    try:
+        total_bubbles = process_chapter_bubbles(chapter)
+    except Exception as e:
+        traceback.print_exc()
+        chapter.status = 'failed'
+        chapter.save(update_fields=['status'])
+        return Response(
+            {"error": f"Lỗi nhận diện bóng thoại ({type(e).__name__}): {e}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
     preview_pages = []
     for page in chapter.pages.all().order_by('page_no'):
@@ -482,6 +492,7 @@ def ocr_chapter_bubbles_api(request, chapter_id):
     try:
         total_ocr = process_chapter_ocr(chapter)
     except Exception as e:
+        traceback.print_exc()
         return Response({"error": f"Lỗi OCR: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     preview_pages = []
@@ -496,7 +507,7 @@ def ocr_chapter_bubbles_api(request, chapter_id):
                 "confidence": b.confidence,
                 "text": ocr.text_raw if ocr else "",
                 "text_tts": ocr.text_corrected if ocr else "",
-                "needs_review": ocr.needs_review if ocr else False,
+                "needs_review": bool(ocr and ocr.confidence is not None and ocr.confidence < 0.9),
             })
         preview_pages.append({
             "id": page.id,

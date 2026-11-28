@@ -14,3 +14,5 @@ ai/datasets/*
 *.pt
 *.pth
 .DS_Store
+
+venv/
