@@ -5,6 +5,8 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
+from analysis.bubble_service import process_chapter_bubbles
+from analysis.ocr_service import process_chapter_ocr
 
 from accounts.models import User
 from .models import Comic, Chapter, Page, ReadingHistory
@@ -66,7 +68,7 @@ def register_account(request):
     if not display_name or not email or not password:
         return Response({"error": "Vui lòng nhập đầy đủ Tên hiển thị, Email và Mật khẩu."}, status=400)
 
-    if email == "admin@livecomic.ai" or User.objects.filter(email=email).exists():
+    if User.objects.filter(email=email).exists():
         return Response({"error": "Email này đã được sử dụng. Vui lòng chọn email khác."}, status=400)
 
     user = User.objects.create(
@@ -86,24 +88,12 @@ def register_account(request):
 
 @api_view(['POST'])
 def simple_login(request):
-    """Đăng nhập bằng tài khoản Admin hoặc User đã đăng ký"""
+    """Đăng nhập bằng tài khoản Admin hoặc User trong CSDL"""
     email = request.data.get('email', '').strip().lower()
     password = request.data.get('password', '').strip()
 
     if not email or not password:
         return Response({"error": "Vui lòng nhập Email và Mật khẩu."}, status=400)
-
-    if email == "admin@livecomic.ai" and password == "admin123":
-        admin_user, _ = User.objects.get_or_create(
-            email="admin@livecomic.ai",
-            defaults={"password_hash": "admin123", "display_name": "Quản trị viên", "role": "admin"}
-        )
-        return Response({
-            "id": admin_user.id,
-            "email": admin_user.email,
-            "display_name": admin_user.display_name,
-            "role": admin_user.role,
-        })
 
     user = User.objects.filter(email=email).first()
     if not user or user.password_hash != password:
@@ -172,9 +162,18 @@ def list_comics(request):
 def upload_comic_chapter(request):
     """CHỈ ADMIN mới được đăng truyện chính thức lên thư viện web + Tự động nhận diện danh mục bằng CLIP"""
     user_role = request.headers.get('X-User-Role', 'user')
+    user_email = request.headers.get('X-User-Email', '').strip().lower()
+
     if user_role != 'admin':
         return Response(
             {"error": "Bạn không có quyền đăng truyện lên thư viện chung. Chỉ Admin mới được phép!"},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    owner = User.objects.filter(email=user_email, role='admin').first()
+    if not owner:
+        return Response(
+            {"error": "Không xác thực được tài khoản Admin đang đăng nhập (vui lòng đăng xuất và đăng nhập lại)."},
             status=status.HTTP_403_FORBIDDEN
         )
 
@@ -186,11 +185,6 @@ def upload_comic_chapter(request):
 
     if not files:
         return Response({"error": "Vui lòng chọn ít nhất 1 ảnh trang truyện."}, status=400)
-
-    owner, _ = User.objects.get_or_create(
-        email="admin@livecomic.ai",
-        defaults={"password_hash": "admin123", "display_name": "Quản trị viên", "role": "admin"}
-    )
 
     author = request.data.get('author', 'LiveComic Studio • CC-BY').strip() or 'LiveComic Studio • CC-BY'
     cast_type = request.data.get('cast_type', 'full_cast')
@@ -221,6 +215,7 @@ def upload_comic_chapter(request):
         }
     )
     if not created:
+        comic.owner = owner
         comic.author = author
         if description:
             comic.description = description
@@ -430,3 +425,90 @@ def get_reading_history(request):
             "last_read_at": h.last_read_at.strftime("%d/%m/%Y %H:%M"),
         })
     return Response(data)
+
+
+@api_view(['POST'])
+def detect_chapter_bubbles_api(request, chapter_id):
+    """CHỈ ADMIN: Chạy YOLOv8 + XY-Cut nhận diện bóng thoại cho toàn bộ chương và lưu vào DB"""
+    user_role = request.headers.get('X-User-Role', 'user')
+    if user_role != 'admin':
+        return Response(
+            {"error": "Chỉ Admin mới có quyền chạy xử lý nhận diện bóng thoại!"},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    try:
+        chapter = Chapter.objects.get(id=chapter_id)
+    except Chapter.DoesNotExist:
+        return Response({"error": "Không tìm thấy chương."}, status=status.HTTP_404_NOT_FOUND)
+
+    total_bubbles = process_chapter_bubbles(chapter)
+
+    preview_pages = []
+    for page in chapter.pages.all().order_by('page_no'):
+        bubbles = list(
+            page.bubbles.all()
+            .order_by('reading_order')
+            .values('id', 'reading_order', 'x', 'y', 'w', 'h', 'confidence')
+        )
+        preview_pages.append({
+            "id": page.id,
+            "page_no": page.page_no,
+            "image_url": f"http://127.0.0.1:8000/media/{page.image_path}",
+            "width": page.width,
+            "height": page.height,
+            "bubbles": bubbles,
+        })
+
+    return Response({
+        "message": "Đã nhận diện và lưu bóng thoại vào cơ sở dữ liệu thành công!",
+        "chapter_id": chapter.id,
+        "total_bubbles": total_bubbles,
+        "pages": preview_pages,
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+def ocr_chapter_bubbles_api(request, chapter_id):
+    """CHỈ ADMIN: Chạy Gemini OCR đọc chữ tiếng Việt trong các bóng thoại đã detect và lưu vào DB"""
+    if request.headers.get('X-User-Role', 'user') != 'admin':
+        return Response({"error": "Chỉ Admin mới có quyền chạy OCR!"}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        chapter = Chapter.objects.get(id=chapter_id)
+    except Chapter.DoesNotExist:
+        return Response({"error": "Không tìm thấy chương."}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        total_ocr = process_chapter_ocr(chapter)
+    except Exception as e:
+        return Response({"error": f"Lỗi OCR: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    preview_pages = []
+    for page in chapter.pages.all().order_by('page_no'):
+        bubbles_data = []
+        for b in page.bubbles.all().order_by('reading_order'):
+            ocr = getattr(b, 'ocr_result', None)
+            bubbles_data.append({
+                "id": b.id,
+                "reading_order": b.reading_order,
+                "x": b.x, "y": b.y, "w": b.w, "h": b.h,
+                "confidence": b.confidence,
+                "text": ocr.text_raw if ocr else "",
+                "text_tts": ocr.text_corrected if ocr else "",
+                "needs_review": ocr.needs_review if ocr else False,
+            })
+        preview_pages.append({
+            "id": page.id,
+            "page_no": page.page_no,
+            "image_url": f"http://127.0.0.1:8000/media/{page.image_path}",
+            "width": page.width,
+            "height": page.height,
+            "bubbles": bubbles_data,
+        })
+
+    return Response({
+        "message": f"Đã nhận diện chữ tiếng Việt cho {total_ocr} bóng thoại!",
+        "total_ocr": total_ocr,
+        "pages": preview_pages,
+    }, status=status.HTTP_200_OK)

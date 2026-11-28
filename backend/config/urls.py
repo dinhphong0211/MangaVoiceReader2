@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.urls import path
 from django.conf import settings
 from django.conf.urls.static import static
+
 from library.views import (
     register_account,
     simple_login,
@@ -12,6 +13,8 @@ from library.views import (
     get_reading_history,
     update_comic,
     delete_comic,
+    detect_chapter_bubbles_api,
+    ocr_chapter_bubbles_api,
 )
 
 urlpatterns = [
@@ -24,5 +27,7 @@ urlpatterns = [
     path('api/comics/<int:comic_id>/update/', update_comic),
     path('api/comics/<int:comic_id>/delete/', delete_comic),
     path('api/chapters/<int:chapter_id>/', chapter_detail),
+    path('api/chapters/<int:chapter_id>/detect-bubbles/', detect_chapter_bubbles_api),
+    path('api/chapters/<int:chapter_id>/ocr-bubbles/', ocr_chapter_bubbles_api),
     path('api/history/', get_reading_history),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

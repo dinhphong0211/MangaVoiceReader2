@@ -9,15 +9,18 @@ import {
   Sparkles,
   History,
   X,
+  Wand2,
 } from "lucide-react";
 import HomePage from "./pages/HomePage";
 import UploadPage from "./pages/UploadPage";
 import ReaderPage from "./pages/ReaderPage";
 import HistoryPage from "./pages/HistoryPage";
+import AdminStudioPage from "./pages/AdminStudioPage";
 
 export default function App() {
-  const [activePage, setActivePage] = useState("home"); // 'home' | 'upload' | 'personal-upload' | 'reader' | 'history'
+  const [activePage, setActivePage] = useState("home"); // 'home' | 'upload' | 'personal-upload' | 'admin-studio' | 'reader' | 'history'
   const [selectedChapterId, setSelectedChapterId] = useState(null);
+  const [studioChapterId, setStudioChapterId] = useState(null);
   const [personalBookData, setPersonalBookData] = useState(null);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -124,12 +127,27 @@ export default function App() {
             </button>
 
             {currentUser?.role === "admin" ? (
-              <button
-                onClick={() => setActivePage("upload")}
-                className="flex items-center gap-1.5 bg-[#e11d48] hover:bg-[#f43f5e] text-white text-xs font-extrabold px-3.5 py-2 rounded-lg shadow transition cursor-pointer"
-              >
-                <Upload className="w-3.5 h-3.5" /> Đăng Truyện Lên Web (Admin)
-              </button>
+              <>
+                <button
+                  onClick={() => setActivePage("upload")}
+                  className="flex items-center gap-1.5 bg-[#e11d48] hover:bg-[#f43f5e] text-white text-xs font-extrabold px-3.5 py-2 rounded-lg shadow transition cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5" /> Đăng Truyện Lên Web (Admin)
+                </button>
+
+                {studioChapterId && (
+                  <button
+                    onClick={() => setActivePage("admin-studio")}
+                    className={`flex items-center gap-1.5 text-xs font-extrabold px-3 py-2 rounded-lg transition cursor-pointer ${
+                      activePage === "admin-studio"
+                        ? "bg-emerald-500 text-black"
+                        : "bg-zinc-800 hover:bg-zinc-700 text-emerald-400"
+                    }`}
+                  >
+                    <Wand2 className="w-3.5 h-3.5" /> AI Studio
+                  </button>
+                )}
+              </>
             ) : (
               <button
                 onClick={() => setActivePage("personal-upload")}
@@ -250,12 +268,25 @@ export default function App() {
             currentUser={currentUser}
             onUploadSuccess={(chapId) => {
               setPersonalBookData(null);
-              setSelectedChapterId(chapId);
-              setActivePage("reader");
+              setStudioChapterId(chapId);
+              setActivePage("admin-studio");
             }}
             onPersonalReadReady={(bookData) => {
               setSelectedChapterId(null);
               setPersonalBookData(bookData);
+              setActivePage("reader");
+            }}
+          />
+        )}
+
+        {activePage === "admin-studio" && studioChapterId && (
+          <AdminStudioPage
+            chapterId={studioChapterId}
+            currentUser={currentUser}
+            onBackToUpload={() => setActivePage("upload")}
+            onOpenReader={(chapId) => {
+              setPersonalBookData(null);
+              setSelectedChapterId(chapId);
               setActivePage("reader");
             }}
           />

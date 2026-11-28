@@ -109,3 +109,4 @@ CORS_ALLOW_HEADERS = [
     "x-user-role",
     "x-user-email",
 ]
+GEMINI_API_KEY = ""

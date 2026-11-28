@@ -1,8 +1,9 @@
 from django.contrib import admin
 from .models import User
 
+
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
     list_display = ('id', 'email', 'display_name', 'role')
     list_editable = ('role',)
-    search_fields = ('email', 'display_name')   
+    search_fields = ('email', 'display_name')

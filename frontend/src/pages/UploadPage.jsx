@@ -53,13 +53,18 @@ export default function UploadPage({ mode, currentUser, onUploadSuccess, onPerso
       if (isAdminMode) {
         const res = await fetch("http://127.0.0.1:8000/api/comics/upload/", {
           method: "POST",
-          headers: { "X-User-Role": currentUser?.role || "user" },
+          headers: {
+            "X-User-Role": currentUser?.role || "user",
+            "X-User-Email": currentUser?.email || "",
+          },
           body: formData,
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Không có quyền đăng truyện.");
+
+        // Đăng xong chuyển thẳng sang trang AI Studio để xử lý bóng thoại & OCR
         onUploadSuccess(data.chapter_id);
-      } else {
+      }else {
         const res = await fetch("http://127.0.0.1:8000/api/comics/quick-read/", {
           method: "POST",
           body: formData,
@@ -239,7 +244,7 @@ export default function UploadPage({ mode, currentUser, onUploadSuccess, onPerso
             ) : (
               <>
                 <BookOpen className="w-5 h-5" />
-                <span>{isAdminMode ? "Đăng Lên Trang Chủ Cho Mọi Người Xem" : "Mở Đọc Ngay"}</span>
+                <span>{isAdminMode ? "Đăng Truyện & Chuyển Sang Xử Lý AI →" : "Mở Đọc Ngay"}</span>
               </>
             )}
           </button>
