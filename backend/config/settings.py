@@ -1,6 +1,11 @@
 from pathlib import Path
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+
 
 SECRET_KEY = 'django-insecure-pnjm8^xm^kc)928)*q-uz)zk4muoy2_7-(7o87l1v-7qh6og4f'
 
@@ -109,4 +114,4 @@ CORS_ALLOW_HEADERS = [
     "x-user-role",
     "x-user-email",
 ]
-GEMINI_API_KEY = ""
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")

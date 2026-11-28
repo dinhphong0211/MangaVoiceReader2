@@ -11,10 +11,18 @@ from google.genai import types
 from analysis.bubble_service import resolve_image_full_path
 from analysis.models import AIModel, Bubble, OCRResult, ProcessingJob
 
-MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+# Thứ tự thử: rẻ/nhanh trước, mạnh sau, cuối cùng là model đời cũ làm dự phòng
+MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+]
 MAX_SIDE = 1000
 CHUNK = 12
-RETRIES = 3
+ROUNDS = 2  # số vòng thử lại toàn bộ danh sách model
 
 PROMPT = """Bạn là công cụ OCR cho truyện tranh tiếng Việt.
 Các ảnh trên là những bong bóng thoại, mỗi ảnh có số thứ tự ghi ngay sau nó (đã xếp theo thứ tự đọc).
@@ -92,8 +100,8 @@ def _ocr_chunk(client, img_bgr, items: list[tuple[int, Bubble]]) -> tuple[dict, 
     contents.append(PROMPT)
 
     last_err = None
-    for model in MODELS:
-        for attempt in range(RETRIES):
+    for round_no in range(ROUNDS):
+        for model in MODELS:
             try:
                 resp = client.models.generate_content(
                     model=model,
@@ -104,11 +112,16 @@ def _ocr_chunk(client, img_bgr, items: list[tuple[int, Bubble]]) -> tuple[dict, 
                 return {int(d["order"]): d for d in data.get("bubbles", [])}, model
             except Exception as e:
                 last_err = e
+                print(f"[OCR] {model} lỗi: {e}")
                 msg = str(e).lower()
-                if "429" in msg or "quota" in msg or "rate" in msg:
-                    time.sleep(15 * (attempt + 1))
-                    continue
-                break
+                # Key sai thì thử model khác cũng vô ích
+                if "api key not valid" in msg or "api_key_invalid" in msg:
+                    raise
+                # Hết quota / quá tải / model không tồn tại: chuyển ngay sang model kế tiếp
+                continue
+        # Đã thử hết mọi model mà vẫn lỗi: chờ một lúc rồi thử lại cả danh sách
+        if round_no < ROUNDS - 1:
+            time.sleep(20 * (round_no + 1))
     raise last_err
 
 
